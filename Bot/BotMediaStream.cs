@@ -44,28 +44,6 @@ namespace EchoBot.Bot
             public string Email { get; set; } = string.Empty;
         }
 
-        private AppSettings _settings;
-
-        /// <summary>
-        /// The video stream interval in seconds
-        /// </summary>
-        private const int VIDEO_STREAM_INTERVAL = 5;
-
-        /// <summary>
-        /// Dictionary to track last video send time for each participant
-        /// </summary>
-        private readonly Dictionary<string, DateTime> _lastVideoSendTime = new Dictionary<string, DateTime>();
-
-        /// <summary>
-        /// Dictionary to track video stream state for participants
-        /// </summary>
-        private readonly Dictionary<string, bool> _participantVideoState = new Dictionary<string, bool>();
-
-        /// <summary>
-        /// Dictionary to track MSI history for participants
-        /// </summary>
-        private readonly Dictionary<string, HashSet<uint>> _participantMsiHistory = new Dictionary<string, HashSet<uint>>();
-
         /// <summary>
         /// The participants
         /// </summary>
@@ -90,17 +68,8 @@ namespace EchoBot.Bot
         /// </summary>
         private readonly ICall _call;
 
-        private long? _interviewStartTime;
-        private long? _interviewEndTime;
-        private string? _candidateEmail;
-
-        // Track which participant is the candidate
-        private string? _candidateUserId;
-
-        /// <summary>
-        /// The media stream
-        /// </summary>
-        private readonly IVideoSocket videoSocket;
+        private long? _meetingStartTime;
+        private long? _meetingEndTime;
         private readonly ILogger _logger;
         private AudioVideoFramePlayer audioVideoFramePlayer;
         private readonly TaskCompletionSource<bool> audioSendStatusActive;
@@ -108,16 +77,9 @@ namespace EchoBot.Bot
         private AudioVideoFramePlayerSettings audioVideoFramePlayerSettings;
         private List<AudioMediaBuffer> audioMediaBuffers = new List<AudioMediaBuffer>();
         private int shutdown;
-        private readonly SpeechService _languageService;
         private readonly WebSocketClient _webSocketClient;
         private readonly object _fileLock = new object();
         private bool _isWebSocketConnected = false;
-
-        // Dictionary to store buffers for each speaker
-        private Dictionary<string, List<(byte[] buffer, long timestamp)>> _speakerBuffers = new Dictionary<string, List<(byte[] buffer, long timestamp)>>();
-        private string _currentSpeakerId = null;
-        private DateTime _lastBufferTime = DateTime.MinValue;
-        private const int SILENCE_THRESHOLD_MS = 500; // 500ms silence threshold
 
         private class ParticipantInfo
         {
@@ -131,17 +93,6 @@ namespace EchoBot.Bot
         // Mapping from speakerId (ActiveSpeakerId/sourceId) to email
         private Dictionary<string, string> _speakerIdToEmail = new Dictionary<string, string>();
 
-        // --- BEGIN NEW TALK ALERT LOGIC ---
-        // Configurable parameters (should be loaded from AppSettings)
-        private int TALK_WINDOW_MINUTES;
-        private const long CANDIDATE_ALERT_TIME_MS = 60000; // 1 minute
-        private readonly object _talkMonitorLock = new object();
-        // Maps speakerId to a list of (start, end) timestamps
-        private readonly Dictionary<string, List<(long start, long end)>> _speakingSegments = new Dictionary<string, List<(long, long)>>();
-        // Track last alert time per speaker to avoid spamming
-        private readonly Dictionary<string, long> _lastAlertTime = new Dictionary<string, long>();
-        private readonly Dictionary<string, long> _panelistAlertSent = new Dictionary<string, long>();
-
         /// <summary>
         /// Initializes a new instance of the <see cref="BotMediaStream" /> class.
         /// </summary>
@@ -152,41 +103,34 @@ namespace EchoBot.Bot
         /// <param name="settings">Azure settings</param>
         /// <param name="call">The call instance</param>
         /// <param name="webSocketClient">WebSocket client instance</param>
-        /// <param name="interviewStartTime">Optional interview start time</param>
-        /// <param name="interviewEndTime">Optional interview end time</param>
-        /// <param name="candidateEmail">Optional candidate email</param>
+        /// <param name="meetingStartTime">Optional meeting start time</param>
+        /// <param name="meetingEndTime">Optional meeting end time</param>
         /// <exception cref="InvalidOperationException">A mediaSession needs to have at least an audioSocket</exception>
         public BotMediaStream(
             ILocalMediaSession mediaSession,
             string callId,
             IGraphLogger graphLogger,
             ILogger logger,
-            AppSettings settings,
             ICall call,
             WebSocketClient webSocketClient,
-            long? interviewStartTime = null,
-            long? interviewEndTime = null,
-            string? candidateEmail = null
+            long? meetingStartTime = null,
+            long? meetingEndTime = null
         )
             : base(graphLogger)
         {
             ArgumentVerifier.ThrowOnNullArgument(mediaSession, nameof(mediaSession));
             ArgumentVerifier.ThrowOnNullArgument(logger, nameof(logger));
-            ArgumentVerifier.ThrowOnNullArgument(settings, nameof(settings));
             ArgumentVerifier.ThrowOnNullArgument(call, nameof(call));
             ArgumentVerifier.ThrowOnNullArgument(webSocketClient, nameof(webSocketClient));
 
-            _settings = settings;
             _logger = logger;
             _call = call;
-            _interviewStartTime = interviewStartTime;
-            _interviewEndTime = interviewEndTime;
-            _candidateEmail = candidateEmail;
+            _meetingStartTime = meetingStartTime;
+            _meetingEndTime = meetingEndTime;
             _webSocketClient = webSocketClient;
-            _webSocketClient.ConnectionClosed += WebSocketClient_ConnectionClosed;
             _isWebSocketConnected = true;  // Set initial connection status
 
-            Console.WriteLine($"[BotMediaStream] Interview Start Time: {interviewStartTime}, Interview End Time: {interviewEndTime}, Candidate Email: {candidateEmail}");
+            Console.WriteLine($"[BotMediaStream] Meeting Start Time: {meetingStartTime}, Meeting End Time: {meetingEndTime}");
 
             // Initialize participants list
             this.participants = new List<IParticipant>();
@@ -207,16 +151,6 @@ namespace EchoBot.Bot
 
             this._audioSocket.AudioSendStatusChanged += OnAudioSendStatusChanged;            
             this._audioSocket.AudioMediaReceived += this.OnAudioMediaReceived;
-
-            // Get single video socket
-            this.videoSocket = mediaSession.VideoSockets?.FirstOrDefault();
-            if (this.videoSocket != null)
-            {
-                Console.WriteLine($"[BotMediaStream] Initialized single video socket with ID: {videoSocket.SocketId}");
-                videoSocket.VideoMediaReceived += this.OnVideoMediaReceived;
-            }
-
-            TALK_WINDOW_MINUTES = _settings.SpeakingTimeWindowMinutes > 0 ? _settings.SpeakingTimeWindowMinutes : 5;
         }
 
         /// <summary>
@@ -228,37 +162,27 @@ namespace EchoBot.Bot
             return participants;
         }
 
-        private async Task AppendToAudioTodayFile(string jsonData)
-        {
-            var filePath = Path.Combine("rawData", $"audio_data_{DateTime.Now:yyyy-MM-dd}.txt");
-            lock (_fileLock)
-            {
-                // Ensure each JSON object is on a new line
-                File.AppendAllText(filePath, jsonData + Environment.NewLine);
-            }
-        }
-
         /// <summary>
-        /// Sends an interview ended event via WebSocket before shutting down.
+        /// Sends a meeting ended event via WebSocket before shutting down.
         /// </summary>
-        /// <returns>A task that completes when the interview ended event has been sent.</returns>
-        public async Task SendInterviewEndedEventAsync()
+        /// <returns>A task that completes when the meeting ended event has been sent.</returns>
+        public async Task SendMeetingEndedEventAsync()
         {
             try
             {
                 // Use interlocked to ensure we only send this event once
-                if (Interlocked.CompareExchange(ref this._interviewEndedEventSent, 1, 0) == 1)
+                if (Interlocked.CompareExchange(ref this._meetingEndedEventSent, 1, 0) == 1)
                 {
-                    Console.WriteLine("[BotMediaStream] Interview ended event already sent, skipping");
+                    Console.WriteLine("[BotMediaStream] Meeting ended event already sent, skipping");
                     return;
                 }
-
+                
                 if (_isWebSocketConnected && _webSocketClient != null)
                 {
-                    Console.WriteLine("[BotMediaStream] Sending interview_ended event before shutdown");
+                    Console.WriteLine("[BotMediaStream] Sending meeting_ended event before shutdown");
                     var endTime = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-                    await _webSocketClient.SendInterviewEventAsync("interview_ended", 
-                        _interviewStartTime.GetValueOrDefault(DateTimeOffset.UtcNow.AddHours(-1).ToUnixTimeSeconds()), 
+                    await _webSocketClient.SendMeetingEventAsync("meeting_ended", 
+                        _meetingStartTime.GetValueOrDefault(DateTimeOffset.UtcNow.AddHours(-1).ToUnixTimeSeconds()), 
                         endTime);
                     
                     // Small delay to ensure the message has time to be sent
@@ -267,12 +191,12 @@ namespace EchoBot.Bot
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[BotMediaStream] Error sending interview_ended event: {ex.Message}");
+                Console.WriteLine($"[BotMediaStream] Error sending meeting_ended event: {ex.Message}");
             }
         }
 
-        // Flag to track if interview ended event has been sent
-        private int _interviewEndedEventSent = 0;
+        // Flag to track if meeting ended event has been sent
+        private int _meetingEndedEventSent = 0;
 
         /// <summary>
         /// Shut down.
@@ -290,24 +214,9 @@ namespace EchoBot.Bot
             Console.WriteLine("[BotMediaStream] Starting graceful shutdown");
 
             // Make local copies of references that we'll use, to prevent race conditions
-            var localVideoSocket = videoSocket;
             var localAudioSocket = _audioSocket;
             var localAudioVideoPlayer = audioVideoFramePlayer;
             var localWebSocketClient = _webSocketClient;
-
-            // First unsubscribe from video socket to stop video streaming
-            try
-            {
-                if (localVideoSocket != null)
-                {
-                    localVideoSocket.Unsubscribe();
-                    Console.WriteLine($"[BotMediaStream] Unsubscribed from video socket during shutdown");
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[BotMediaStream] Error unsubscribing from video socket during shutdown: {ex.Message}");
-            }
 
             try
             {
@@ -324,9 +233,6 @@ namespace EchoBot.Bot
             {
                 Console.WriteLine($"[BotMediaStream] Error waiting for video player completion: {ex.Message}");
             }
-
-            // Clear video states
-            _participantVideoState.Clear();
 
             // unsubscribe from audio events
             if (localAudioSocket != null)
@@ -385,7 +291,7 @@ namespace EchoBot.Bot
                 // Set WebSocket as disconnected
                 _isWebSocketConnected = false;
 
-                // Dispose WebSocket client - don't call SendInterviewEndedEventAsync here
+                // Dispose WebSocket client - don't call SendMeetingEndedEventAsync here
                 // as it's expected to be called by CallHandler before ShutdownAsync
                 if (localWebSocketClient != null)
                 {
@@ -476,7 +382,6 @@ namespace EchoBot.Bot
                             string speakerId = unmixedBuffer.ActiveSpeakerId.ToString();
                             string email = "";
                             string displayName = "Unknown";
-                            string role = "Unknown";
                             
                             if (_participantInfo.TryGetValue(speakerId, out var info))
                             {
@@ -485,9 +390,8 @@ namespace EchoBot.Bot
                                 {
                                     userDetailsMap.TryGetValue(info.UserId, out userDetails);
                                 }
-                                email = info.Email ?? userDetails?.Email ?? _candidateEmail ?? "";
+                                email = info.Email ?? userDetails?.Email ?? "";
                                 displayName = info.DisplayName ?? "Unknown";
-                                role = email == _candidateEmail ? "Candidate" : "Panelist";
                             }
                             else
                             {
@@ -515,10 +419,9 @@ namespace EchoBot.Bot
                                     };
                                     
                                     // Update local variables for current processing
-                                    email = userDetails?.Email ?? _candidateEmail ?? "";
+                                    email = userDetails?.Email ?? "";
                                     displayName = identity?.DisplayName ?? "Unknown";
-                                    role = email == _candidateEmail ? "Candidate" : "Panelist";
-                                    
+
                                     // Store mapping from speakerId to email for role assignment
                                     if (!_speakerIdToEmail.ContainsKey(speakerId) && userDetails?.Email != null)
                                         _speakerIdToEmail[speakerId] = userDetails.Email;
@@ -593,8 +496,7 @@ namespace EchoBot.Bot
                                 Email            = email,
                                 DisplayName      = displayName,
                                 SpeakStartTimeMs = speakStartTime,
-                                SpeakEndTimeMs   = speakEndTime,
-                                Role             = role
+                                SpeakEndTimeMs   = speakEndTime
                             });
                         }
 
@@ -613,111 +515,5 @@ namespace EchoBot.Bot
                     }
                 }
             }
-
-        private async void OnVideoMediaReceived(object? sender, VideoMediaReceivedEventArgs e)
-        {
-            if (!_isWebSocketConnected) 
-            {
-                Console.WriteLine("[OnVideoMediaReceived] WebSocket not connected, skipping video frame");
-                return;
-            }
-
-            try 
-            {
-                // Track that we're receiving video for this MSI
-                string msiKey = e.Buffer.MediaSourceId.ToString();
-                _participantVideoState[msiKey] = true;
-
-                byte[] buffer = new byte[e.Buffer.Length];
-                Marshal.Copy(e.Buffer.Data, buffer, 0, (int)e.Buffer.Length);
-                
-                // Send to WebSocket server
-                await _webSocketClient.SendVideoDataAsync(buffer, e.Buffer.VideoFormat, e.Buffer.OriginalVideoFormat);
-          
-                // Log video frame details
-                // Console.WriteLine($"[BotMediaStream] Received video frame: MSI={e.Buffer.MediaSourceId}, Format={e.Buffer.VideoFormat}, Size={buffer.Length} bytes");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, $"Error processing video data: {ex.Message}");
-                Console.WriteLine($"[BotMediaStream] Video processing error: {ex.Message}");
-            }
-            finally
-            {
-                e.Buffer.Dispose();
-            }
-        }
-
-        private void WebSocketClient_ConnectionClosed(object? sender, EventArgs e)
-        {
-            _isWebSocketConnected = false;
-            _logger.LogWarning("WebSocket connection closed - audio/video streaming will be paused");
-
-            // Clear video states and unsubscribe from video socket
-            try
-            {
-                _participantVideoState.Clear();
-                if (videoSocket != null)
-                {
-                    videoSocket.Unsubscribe();
-                    Console.WriteLine($"[BotMediaStream] Unsubscribed from video socket due to WebSocket disconnection");
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[BotMediaStream] Error cleaning up video socket: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Subscribe to a participant's video
-        /// </summary>
-        public void Subscribe(MediaType mediaType, uint msi, VideoResolution resolution)
-        {
-            // Don't subscribe if WebSocket is not connected
-            if (!_isWebSocketConnected)
-            {
-                Console.WriteLine($"[BotMediaStream] WebSocket not connected, skipping video subscription");
-                return;
-            }
-
-            try
-            {
-                if (videoSocket != null)
-                {
-                    // Log subscription attempt
-                    Console.WriteLine($"[BotMediaStream] Attempting to subscribe to MSI {msi} on socket {videoSocket.SocketId}");
-
-                    // Unsubscribe from any existing subscription on this socket
-                    try
-                    {
-                        videoSocket.Unsubscribe();
-                        Console.WriteLine($"[BotMediaStream] Unsubscribed from previous stream on socket {videoSocket.SocketId}");
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"[BotMediaStream] Error unsubscribing from previous stream: {ex.Message}");
-                    }
-
-                    // Subscribe to the new MSI
-                    videoSocket.Subscribe(resolution, msi);
-                    
-                    // Track that we're subscribed to this MSI
-                    string msiKey = msi.ToString();
-                    _participantVideoState[msiKey] = true;
-                    
-                    Console.WriteLine($"[BotMediaStream] Successfully subscribed to video stream MSI {msi}");
-                }
-                else
-                {
-                    Console.WriteLine($"[BotMediaStream] No video socket available for subscription");
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[BotMediaStream] Error in Subscribe: {ex.Message}");
-                Console.WriteLine($"[BotMediaStream] Stack trace: {ex.StackTrace}");
-            }
-        }
     }
 }

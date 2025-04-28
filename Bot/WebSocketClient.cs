@@ -10,6 +10,7 @@ using JWT.Algorithms;
 using JWT.Builder;
 using EchoBot.Models;
 using Microsoft.Skype.Bots.Media;
+using System.Collections.Generic;
 
 namespace EchoBot.Bot
 {
@@ -23,15 +24,11 @@ namespace EchoBot.Bot
         private CancellationTokenSource _cancellationTokenSource = new CancellationTokenSource();
         private bool _isConnected;
 
-        // Store interview details
-        private string _interviewId;
-        private long? _interviewStartTime;
-        private long? _interviewEndTime;
-        private string _candidateEmail;
-        private VISTAQuestions _vistaQuestions;
-
-        // Video streaming related fields
-        private int _frameIndex = 0;
+        // Store meeting details
+        private string _meetingId;
+        private long? _meetingStartTime;
+        private long? _meetingEndTime;
+        private List<Agenda> _agenda;
 
         public bool IsConnected => _isConnected && _webSocket?.State == WebSocketState.Open;
 
@@ -42,21 +39,19 @@ namespace EchoBot.Bot
             string jwtSecret,
             string companyId,
             ILogger logger,
-            string interviewId = "",
-            long? interviewStartTime = null,
-            long? interviewEndTime = null,
-            string candidateEmail = "",
-            VISTAQuestions? vistaQuestions = null)
+            string meetingId = "",
+            long? meetingStartTime = null,
+            long? meetingEndTime = null,
+            List<Agenda>? agenda = null)
         {
             _serverUrl = serverUrl;
             _jwtSecret = jwtSecret;
             _companyId = companyId;
             _logger = logger;
-            _interviewId = interviewId ?? string.Empty;
-            _interviewStartTime = interviewStartTime;
-            _interviewEndTime = interviewEndTime;
-            _candidateEmail = candidateEmail ?? string.Empty;
-            _vistaQuestions = vistaQuestions ?? new VISTAQuestions();
+            _meetingId = meetingId ?? string.Empty;
+            _meetingStartTime = meetingStartTime;
+            _meetingEndTime = meetingEndTime;
+            _agenda = agenda ?? new List<Agenda>();
         }
 
         private string GenerateJwtToken()
@@ -109,8 +104,8 @@ namespace EchoBot.Bot
                 _isConnected = true;
                 Console.WriteLine("WebSocket connected successfully");
 
-                // Send interview details immediately after connection
-                await SendInterviewDetailsEvent();
+                // Send meeting details immediately after connection
+                await SendMeetingDetailsEvent();
 
                 // Start receiving messages
                 _ = StartReceivingAsync();
@@ -123,18 +118,17 @@ namespace EchoBot.Bot
             }
         }
 
-        private async Task SendInterviewDetailsEvent()
+        private async Task SendMeetingDetailsEvent()
         {
             try
             {
                 var payload = new
                 {
-                    type = "interview_details",
-                    interviewId = _interviewId,
-                    interviewStartTime = _interviewStartTime,
-                    interviewEndTime = _interviewEndTime,
-                    candidateEmail = _candidateEmail ?? "",
-                    vistaQuestions = _vistaQuestions
+                    type = "meeting_details",
+                    meetingId = _meetingId,
+                    meetingStartTime = _meetingStartTime,
+                    meetingEndTime = _meetingEndTime,
+                    agenda = _agenda
                 };
 
                 var message = System.Text.Json.JsonSerializer.Serialize(payload);
@@ -145,25 +139,11 @@ namespace EchoBot.Bot
                     true,
                     _cancellationTokenSource != null ? _cancellationTokenSource.Token : CancellationToken.None);
 
-               Console.WriteLine($"Sent interview details event for interview {_interviewId}");
+               Console.WriteLine($"Sent meeting details event for meeting {_meetingId}");
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Failed to send interview details event: {ex.Message}");
-            }
-        }
-
-        private async Task MonitorConnectionStateAsync()
-        {
-            while (!_cancellationTokenSource.Token.IsCancellationRequested)
-            {
-                if (_webSocket.State != WebSocketState.Open)
-                {
-                    _isConnected = false;
-                    OnConnectionClosed();
-                    break;
-                }
-                await Task.Delay(1000);
+                _logger.LogError($"Failed to send meeting details event: {ex.Message}");
             }
         }
 
@@ -195,8 +175,7 @@ namespace EchoBot.Bot
                         email           = c.Email            ?? "",
                         displayName     = c.DisplayName      ?? "",
                         speakStartTime  = c.SpeakStartTimeMs.ToString(),
-                        speakEndTime    = c.SpeakEndTimeMs  .ToString(),
-                        role            = string.IsNullOrEmpty(c.Role) ? "Unknown" : c.Role
+                        speakEndTime    = c.SpeakEndTimeMs  .ToString()
                     })
                 };
 
@@ -220,65 +199,11 @@ namespace EchoBot.Bot
             }
         }
 
-        public async Task SendVideoDataAsync(byte[] videoData, VideoFormat format, VideoFormat originalFormat)
+        public async Task SendMeetingEventAsync(string eventType, long startTime, long? endTime = null)
         {
             if (!_isConnected || _webSocket.State != WebSocketState.Open)
             {
-                _logger.LogWarning("Cannot send video data - WebSocket is not connected");
-                return;
-            }
-
-            try
-            {
-                var payload = new
-                {
-                    type = "video",
-                    buffer = Convert.ToBase64String(videoData),
-                    metadata = new
-                    {
-                        format = new
-                        {
-                            Width = format.Width,
-                            Height = format.Height,
-                            FrameRate = format.FrameRate
-                        },
-                        originalFormat = originalFormat != null ? new
-                        {
-                            Width = originalFormat.Width,
-                            Height = originalFormat.Height,
-                            FrameRate = originalFormat.FrameRate
-                        } : null,
-                        timestamp = DateTime.Now,
-                        frameIndex = _frameIndex++
-                    }
-                };
-
-                var jsonString = System.Text.Json.JsonSerializer.Serialize(payload);
-                var messageBytes = Encoding.UTF8.GetBytes(jsonString);
-
-                await _webSocket.SendAsync(
-                    new ArraySegment<byte>(messageBytes),
-                    WebSocketMessageType.Text,
-                    true,
-                    _cancellationTokenSource != null ? _cancellationTokenSource.Token : CancellationToken.None);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error sending video data: {ex.Message}");
-                if (_webSocket.State != WebSocketState.Open)
-                {
-                    _isConnected = false;
-                    OnConnectionClosed();
-                }
-                throw;
-            }
-        }
-
-        public async Task SendInterviewEventAsync(string eventType, long startTime, long? endTime = null)
-        {
-            if (!_isConnected || _webSocket.State != WebSocketState.Open)
-            {
-                _logger.LogWarning("Cannot send interview event - WebSocket is not connected");
+                _logger.LogWarning("Cannot send meeting event - WebSocket is not connected");
                 return;
             }
 
@@ -302,7 +227,7 @@ namespace EchoBot.Bot
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Error sending interview event: {ex.Message}");
+                _logger.LogError($"Error sending meeting event: {ex.Message}");
                 if (_webSocket.State != WebSocketState.Open)
                 {
                     _isConnected = false;
@@ -357,48 +282,6 @@ namespace EchoBot.Bot
                 _isConnected = false;
                 OnConnectionClosed();
                 throw;
-            }
-        }
-
-        /// <summary>
-        /// Sends a talk_alert event to the WebSocket server.
-        /// </summary>
-        /// <param name="alertPayload">The payload object containing talk alert details.</param>
-        public async Task SendTalkAlertEventAsync(object alertPayload)
-        {
-            if (!_isConnected || _webSocket.State != WebSocketState.Open)
-            {
-                Console.WriteLine("Cannot send talk_alert event - WebSocket is not connected");
-                return;
-            }
-
-            try
-            {
-                // Ensure type is set to talk_alert if not present
-                var payloadWithType = alertPayload;
-                if (alertPayload is not null && !alertPayload.GetType().GetProperty("type")?.GetValue(alertPayload)?.Equals("talk_alert") == true)
-                {
-                    // If type is not set, wrap the payload
-                    payloadWithType = new { type = "talk_ratio_alert", data = alertPayload };
-                }
-                var jsonString = System.Text.Json.JsonSerializer.Serialize(payloadWithType);
-                var messageBytes = Encoding.UTF8.GetBytes(jsonString);
-
-                await _webSocket.SendAsync(
-                    new ArraySegment<byte>(messageBytes),
-                    WebSocketMessageType.Text,
-                    true,
-                    _cancellationTokenSource != null ? _cancellationTokenSource.Token : CancellationToken.None);
-                Console.WriteLine($"Sent talk_alert event: {jsonString}");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error sending talk_alert event: {ex.Message}");
-                if (_webSocket.State != WebSocketState.Open)
-                {
-                    _isConnected = false;
-                    OnConnectionClosed();
-                }
             }
         }
 

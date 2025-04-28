@@ -154,56 +154,56 @@ namespace EchoBot
             }
 
             // --- BEGIN: Notify Python server when bot is ready ---
-            try
-            {
-                var pythonServerUrl = _settings.PythonServerUrl;
-                var jwtSecret = _settings.WebSocketJwtSecret;
-                var companyId = _settings.CompanyId;
+            // try
+            // {
+            //     var pythonServerUrl = _settings.PythonServerUrl;
+            //     var jwtSecret = _settings.WebSocketJwtSecret;
+            //     var companyId = _settings.CompanyId;
 
-                if (!string.IsNullOrWhiteSpace(pythonServerUrl) && !string.IsNullOrWhiteSpace(jwtSecret) && !string.IsNullOrWhiteSpace(companyId))
-                {
-                    var payload = new Dictionary<string, object>
-                    {
-                        { "companyId", companyId },
-                        { "iat", DateTimeOffset.UtcNow.ToUnixTimeSeconds() }
-                    };
-                    var algorithm = new HMACSHA256Algorithm();
-                    var serializer = new JsonNetSerializer();
-                    var urlEncoder = new JwtBase64UrlEncoder();
-                    var encoder = new JwtEncoder(algorithm, serializer, urlEncoder);
-                    var token = encoder.Encode(payload, jwtSecret);
+            //     if (!string.IsNullOrWhiteSpace(pythonServerUrl) && !string.IsNullOrWhiteSpace(jwtSecret) && !string.IsNullOrWhiteSpace(companyId))
+            //     {
+            //         var payload = new Dictionary<string, object>
+            //         {
+            //             { "companyId", companyId },
+            //             { "iat", DateTimeOffset.UtcNow.ToUnixTimeSeconds() }
+            //         };
+            //         var algorithm = new HMACSHA256Algorithm();
+            //         var serializer = new JsonNetSerializer();
+            //         var urlEncoder = new JwtBase64UrlEncoder();
+            //         var encoder = new JwtEncoder(algorithm, serializer, urlEncoder);
+            //         var token = encoder.Encode(payload, jwtSecret);
 
-                    using (var client = new HttpClient())
-                    {
-                        Console.WriteLine($"Generated JWT token: {token}");
-                        // Set the Authorization header properly with "Bearer"
-                        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-                        var postUrl = pythonServerUrl.TrimEnd('/') + "/service/started";
-                        var response = await client.PostAsync(postUrl, null);
-                        // Log request headers
-                        foreach (var header in client.DefaultRequestHeaders)
-                        {
-                            Console.WriteLine($"Header: {header.Key} = {string.Join(", ", header.Value)}");
-                        }
-                        if (response.IsSuccessStatusCode)
-                        {
-                            Console.WriteLine($"Successfully called {postUrl} at startup.");
-                        }
-                        else
-                        {
-                            Console.WriteLine($"Failed to call {postUrl} at startup. Status: {response.StatusCode}");
-                        }
-                    }
-                }
-                else
-                {
-                    _logger.LogWarning("One or more required configuration values are missing in AppSettings.");
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error during startup notification: {Message}", ex.Message);
-            }
+            //         using (var client = new HttpClient())
+            //         {
+            //             Console.WriteLine($"Generated JWT token: {token}");
+            //             // Set the Authorization header properly with "Bearer"
+            //             client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+            //             var postUrl = pythonServerUrl.TrimEnd('/') + "/service/started";
+            //             var response = await client.PostAsync(postUrl, null);
+            //             // Log request headers
+            //             foreach (var header in client.DefaultRequestHeaders)
+            //             {
+            //                 Console.WriteLine($"Header: {header.Key} = {string.Join(", ", header.Value)}");
+            //             }
+            //             if (response.IsSuccessStatusCode)
+            //             {
+            //                 Console.WriteLine($"Successfully called {postUrl} at startup.");
+            //             }
+            //             else
+            //             {
+            //                 Console.WriteLine($"Failed to call {postUrl} at startup. Status: {response.StatusCode}");
+            //             }
+            //         }
+            //     }
+            //     else
+            //     {
+            //         _logger.LogWarning("One or more required configuration values are missing in AppSettings.");
+            //     }
+            // }
+            // catch (Exception ex)
+            // {
+            //     _logger.LogError(ex, "Error during startup notification: {Message}", ex.Message);
+            // }
             // --- END: Notify Python server when bot is ready ---
 
             // Configure the HTTP request pipeline.

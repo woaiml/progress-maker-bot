@@ -12,6 +12,7 @@
 // <summary></summary>
 // ***********************************************************************
 using System.Text.Json.Serialization;
+using System.Collections.Generic;
 
 namespace EchoBot.Models
 {
@@ -21,29 +22,29 @@ namespace EchoBot.Models
     public class JoinCallBody
     {
         /// <summary>
-        /// Gets or sets the Teams interview join URL.
+        /// Gets or sets the Teams meeting join URL.
         /// </summary>
         /// <value>The join URL.</value>
         [JsonPropertyName("joinURL")]
         public string JoinUrl { get; set; } = string.Empty;
 
         /// <summary>
-        /// Gets or sets the interview start time in Unix timestamp format (optional)
+        /// Gets or sets the meeting start time in Unix timestamp format (optional)
         /// </summary>
-        [JsonPropertyName("InterviewStartTime")]
-        public long? InterviewStartTime { get; set; }
+        [JsonPropertyName("MeetingStartTime")]
+        public long? MeetingStartTime { get; set; }
 
         /// <summary>
-        /// Gets or sets the interview end time in Unix timestamp format (optional)
+        /// Gets or sets the meeting end time in Unix timestamp format (optional)
         /// </summary>
-        [JsonPropertyName("InterviewEndTime")]
-        public long? InterviewEndTime { get; set; }
+        [JsonPropertyName("MeetingEndTime")]
+        public long? MeetingEndTime { get; set; }
 
         /// <summary>
-        /// Gets or sets the interview ID
+        /// Gets or sets the meeting ID
         /// </summary>
-        [JsonPropertyName("InterviewId")]
-        public string InterviewId { get; set; } = string.Empty;
+        [JsonPropertyName("MeetingId")]
+        public string MeetingId { get; set; } = string.Empty;
 
         /// <summary>
         /// Gets or sets the company ID
@@ -52,16 +53,10 @@ namespace EchoBot.Models
         public string CompanyId { get; set; } = string.Empty;
 
         /// <summary>
-        /// Gets or sets the candidate's email address (optional)
+        /// Gets or sets the agenda items for the meeting
         /// </summary>
-        [JsonPropertyName("CandidateEmail")]
-        public string? CandidateEmail { get; set; }
-
-        /// <summary>
-        /// Gets or sets the MOATS questions
-        /// </summary>
-        [JsonPropertyName("VistaQuestions")]
-        public VISTAQuestions VistaQuestions { get; set; } = new VISTAQuestions();
+        [JsonPropertyName("Agenda")]
+        public List<Agenda> Agenda { get; set; } = new List<Agenda>();
 
         /// <summary>
         /// Gets or sets the display name.

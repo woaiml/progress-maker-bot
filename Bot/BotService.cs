@@ -81,10 +81,9 @@ namespace EchoBot.Bot
         public ICommunicationsClient Client { get; private set; } = null!;
 
         /// <summary>
-        /// Store interview details for each call by thread ID
+        /// Store meeting details for each call by thread ID
         /// </summary>
-        private readonly Dictionary<string, (long StartTime, long EndTime, string CandidateEmail)> _pendingCallDetails = new Dictionary<string, (long StartTime, long EndTime, string CandidateEmail)>();
-
+        private readonly Dictionary<string, (long StartTime, long EndTime)> _pendingCallDetails = new Dictionary<string, (long StartTime, long EndTime)>();
         /// <summary>
         /// Dispose of the call client
         /// </summary>
@@ -231,11 +230,10 @@ namespace EchoBot.Bot
                     _settings.WebSocketJwtSecret,
                     joinCallBody.CompanyId,
                     _logger,
-                    joinCallBody.InterviewId,
-                    joinCallBody.InterviewStartTime,
-                    joinCallBody.InterviewEndTime,
-                    joinCallBody.CandidateEmail,
-                    joinCallBody.VistaQuestions
+                    joinCallBody.MeetingId,
+                    joinCallBody.MeetingStartTime,
+                    joinCallBody.MeetingEndTime,
+                    joinCallBody.Agenda
                 );
                 _webSocketClient.ConnectionClosed += WebSocketClient_ConnectionClosed;
             }
@@ -277,9 +275,8 @@ namespace EchoBot.Bot
             {
                 // Store the call details before creating the call
                 _pendingCallDetails[joinParams.ChatInfo.ThreadId] = (
-                    joinCallBody.InterviewStartTime ?? 0,
-                    joinCallBody.InterviewEndTime ?? 0,
-                    joinCallBody.CandidateEmail ?? string.Empty
+                    joinCallBody.MeetingStartTime ?? 0,
+                    joinCallBody.MeetingEndTime ?? 0
                 );
 
                 var statefulCall = await this.Client.Calls().AddAsync(joinParams, scenarioId).ConfigureAwait(false);
@@ -299,18 +296,6 @@ namespace EchoBot.Bot
         {
             try
             {
-                // var videoSocketSettings = new List<VideoSocketSettings>();
-
-                // // create the receive only sockets settings for the multiview support
-                // for (int i = 0; i < 3; i++)
-                // {
-                //     videoSocketSettings.Add(new VideoSocketSettings
-                //     {
-                //         StreamDirections = StreamDirection.Recvonly,
-                //         ReceiveColorFormat = VideoColorFormat.NV12,
-                //     });
-                // }
-
                 // create media session object, this is needed to establish call connections
                 return this.Client.CreateMediaSession(
                     new AudioSocketSettings
@@ -319,17 +304,6 @@ namespace EchoBot.Bot
                         // Note! Currently, the only audio format supported when receiving unmixed audio is Pcm16K
                         SupportedAudioFormat = AudioFormat.Pcm16K,
                         ReceiveUnmixedMeetingAudio = true //get the extra buffers for the speakers
-                    },
-                    new VideoSocketSettings
-                    {
-                        StreamDirections = StreamDirection.Recvonly,
-                        ReceiveColorFormat = VideoColorFormat.H264,
-                        SupportedSendVideoFormats = new List<VideoFormat>
-                        {
-                            VideoFormat.H264_320x180_15Fps, // Required minimum resolution
-                            VideoFormat.H264_1280x720_30Fps // Your desired resolution
-                        },
-                        MaxConcurrentSendStreams = 1
                     },
                     mediaSessionId: mediaSessionId);
             }
@@ -419,9 +393,9 @@ namespace EchoBot.Bot
                 var threadId = call.Resource.ChatInfo.ThreadId;
                 
                 // Try to get the pending call details
-                var (startTime, endTime, candidateEmail) = _pendingCallDetails.TryGetValue(threadId, out var details) 
+                var (startTime, endTime) = _pendingCallDetails.TryGetValue(threadId, out var details) 
                     ? details 
-                    : (0, 0, string.Empty);
+                    : (0, 0);
 
                 // Remove from pending details since we're handling it now
                 _pendingCallDetails.Remove(threadId);
@@ -433,8 +407,7 @@ namespace EchoBot.Bot
                     _logger,
                     _webSocketClient,
                     startTime,
-                    endTime,
-                    candidateEmail
+                    endTime
                 );
             }
 

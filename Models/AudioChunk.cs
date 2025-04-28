@@ -7,6 +7,5 @@ namespace EchoBot.Shared
         public string DisplayName      { get; init; }
         public long   SpeakStartTimeMs { get; init; }
         public long   SpeakEndTimeMs   { get; init; }
-        public string Role             { get; init; }
     }
 }

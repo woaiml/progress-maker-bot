@@ -29,7 +29,7 @@ namespace EchoBot.Models
         /// <summary>
         /// Parse Join URL into its components.
         /// </summary>
-        /// <param name="joinURL">Join URL from Team's interview body.</param>
+        /// <param name="joinURL">Join URL from Team's meeting body.</param>
         /// <returns>Parsed data.</returns>
         /// <exception cref="ArgumentException">Join URL cannot be null or empty: {joinURL} - joinURL</exception>
         /// <exception cref="ArgumentException">Join URL cannot be parsed: {joinURL} - joinURL</exception>

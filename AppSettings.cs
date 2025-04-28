@@ -126,21 +126,16 @@ namespace EchoBot
         [Required]
         public string MediaDnsName { get; set; } = string.Empty;
 
-        /// <summary>
-        /// Gets or sets the Python server URL for service notifications
-        /// </summary>
-        [Required]
-        public string PythonServerUrl { get; set; } = string.Empty;
+        // /// <summary>
+        // /// Gets or sets the Python server URL for service notifications
+        // /// </summary>
+        // [Required]
+        // public string PythonServerUrl { get; set; } = string.Empty;
 
-        /// <summary>
-        /// Gets or sets the Company ID for JWT claims
-        /// </summary>
-        [Required]
-        public string CompanyId { get; set; } = string.Empty;
-
-        /// <summary>
-        /// Default 5 minutes (window for speaking time monitoring)
-        /// </summary>
-        public int SpeakingTimeWindowMinutes { get; set; } = 5;
+        // /// <summary>
+        // /// Gets or sets the Company ID for JWT claims
+        // /// </summary>
+        // [Required]
+        // public string CompanyId { get; set; } = string.Empty;
     }
 }
