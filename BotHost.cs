@@ -75,6 +75,21 @@ namespace EchoBot
             // Add services to the container.
             builder.Services.AddControllers();
 
+            // --- CORS configuration ---
+            builder.Services.AddCors(options =>
+            {
+                options.AddPolicy("AllowFrontend", policy =>
+                {
+                    policy.WithOrigins(
+                        "http://localhost:3000",
+                        "https://e698-115-96-27-193.ngrok-free.app"
+                    )
+                    .AllowAnyHeader()
+                    .AllowAnyMethod();
+                });
+            });
+            // --- End CORS configuration ---
+
             // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
             builder.Services.AddEndpointsApiExplorer();
             builder.Services.AddSwaggerGen();
@@ -213,6 +228,10 @@ namespace EchoBot
                 _app.UseSwagger();
                 _app.UseSwaggerUI();
             }
+
+            // --- Use CORS before authorization and controllers ---
+            _app.UseCors("AllowFrontend");
+            // --- End Use CORS ---
 
             _app.UseAuthorization();
 
